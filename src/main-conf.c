@@ -302,6 +302,10 @@ masscan_echo(struct Masscan *masscan, FILE *fp)
     fprintf(fp, "shard = %u/%u\n", masscan->shard.one, masscan->shard.of);
     if (masscan->is_banners)
         fprintf(fp, "banners = true\n");
+    if (masscan->is_arp)
+        fprintf(fp, "arp = true\n");
+    if (masscan->is_noreset)
+        fprintf(fp, "noreset = true\n");
 
     fprintf(fp, "# ADAPTER SETTINGS\n");
     if (masscan->nic_count == 0)
@@ -446,6 +450,11 @@ masscan_echo(struct Masscan *masscan, FILE *fp)
     fprintf(fp, "%scapture = cert\n", masscan->is_capture_cert?"":"no");
     fprintf(fp, "%scapture = html\n", masscan->is_capture_html?"":"no");
     fprintf(fp, "%scapture = heartbleed\n", masscan->is_capture_heartbleed?"":"no");
+    fprintf(fp, "%scapture = ticketbleed\n", masscan->is_capture_ticketbleed?"":"no");
+    
+    if (masscan->is_hello_ssl) {
+        fprintf(fp, "hello = ssl\n");
+    }
 
     /*
      *  TCP payloads
@@ -653,6 +662,41 @@ parseInt(const char *str)
         str++;
     }
     return result;
+}
+
+static unsigned
+parseBoolean(const char *str)
+{
+    if (str == NULL || str[0] == 0)
+        return 1;
+    if (isdigit(str[0])) {
+        if (strtoul(str,0,0) == 0)
+            return 0;
+        else
+            return 1;
+    }
+    switch (str[0]) {
+    case 't':
+    case 'T':
+        return 1;
+    case 'f':
+    case 'F':
+        return 0;
+    case 'o':
+    case 'O':
+        if (str[1] == 'f' || str[1] == 'F')
+            return 0;
+        else
+            return 1;
+        break;
+    case 'Y':
+    case 'y':
+        return 1;
+    case 'n':
+    case 'N':
+        return 0;
+    }
+    return 1;
 }
 
 /***************************************************************************
@@ -1057,12 +1101,24 @@ masscan_set_parameter(struct Masscan *masscan,
         masscan_set_parameter(masscan, "router-mac", "ff-ff-ff-ff-ff-ff");
         masscan->is_arp = 1; /* needs additional flag */
         LOG(5, "--arpscan\n");
+    } else if (EQUALS("noreset", name)) {
+        if (value && value[0])
+            masscan->is_noreset = parseBoolean(value);
+        else
+            masscan->is_noreset = 1;
     } else if (EQUALS("bpf", name)) {
         size_t len = strlen(value) + 1;
         if (masscan->bpf_filter)
             free(masscan->bpf_filter);
         masscan->bpf_filter = (char*)malloc(len);
         memcpy(masscan->bpf_filter, value, len);
+    } else if (EQUALS("hello", name)) {
+        if (EQUALS("ssl", value))
+            masscan->is_hello_ssl = 1;
+        else {
+            fprintf(stderr, "FAIL: %s: unknown hello type\n", value);
+            exit(1);
+        }
     } else if (EQUALS("capture", name)) {
         if (EQUALS("cert", value))
             masscan->is_capture_cert = 1;
@@ -1070,6 +1126,8 @@ masscan_set_parameter(struct Masscan *masscan,
             masscan->is_capture_html = 1;
         else if (EQUALS("heartbleed", value))
             masscan->is_capture_heartbleed = 1;
+        else if (EQUALS("ticketbleed", value))
+            masscan->is_capture_ticketbleed = 1;
         else {
             fprintf(stderr, "FAIL: %s: unknown capture type\n", value);
             exit(1);
@@ -1081,6 +1139,8 @@ masscan_set_parameter(struct Masscan *masscan,
             masscan->is_capture_html = 0;
         else if (EQUALS("heartbleed", value))
             masscan->is_capture_heartbleed = 0;
+        else if (EQUALS("ticketbleed", value))
+            masscan->is_capture_ticketbleed = 0;
         else {
             fprintf(stderr, "FAIL: %s: unknown capture type\n", value);
             exit(1);
@@ -1204,6 +1264,11 @@ masscan_set_parameter(struct Masscan *masscan,
         masscan_set_parameter(masscan, "no-capture", "cert");
         masscan_set_parameter(masscan, "no-capture", "heartbleed");
         masscan_set_parameter(masscan, "banners", "true");
+    } else if (EQUALS("ticketbleed", name)) {
+        masscan->is_ticketbleed = 1;
+        masscan_set_parameter(masscan, "no-capture", "cert");
+        masscan_set_parameter(masscan, "no-capture", "ticketbleed");
+        masscan_set_parameter(masscan, "banners", "true");
     } else if (EQUALS("hello-file", name)) {
         /* When connecting via TCP, send this file */
         FILE *fp;
@@ -1298,6 +1363,8 @@ masscan_set_parameter(struct Masscan *masscan,
         masscan->op = Operation_List_Adapters;
     } else if (EQUALS("includefile", name)) {
         ranges_from_file(&masscan->targets, value);
+        if (masscan->op == 0)
+            masscan->op = Operation_Scan;
     } else if (EQUALS("infinite", name)) {
         masscan->is_infinite = 1;
     } else if (EQUALS("interactive", name)) {
@@ -1474,7 +1541,7 @@ masscan_set_parameter(struct Masscan *masscan,
         if (offset < max_offset) {
             while (offset < max_offset && isspace(value[offset]))
                 offset++;
-            if (offset+1 < max_offset && value[offset] == ';' && isdigit(value[offset+1]&0xFF)) {
+            if (offset+1 < max_offset && value[offset] == ':' && isdigit(value[offset+1]&0xFF)) {
                 port = strtoul(value+offset+1, 0, 0);
                 if (port > 65535 || port == 0) {
                     LOG(0, "FAIL: bad redis port: %s\n", value+offset+1);
@@ -1525,6 +1592,9 @@ masscan_set_parameter(struct Masscan *masscan,
     } else if (EQUALS("script", name)) {
         if (EQUALS("heartbleed", value)) {
             masscan_set_parameter(masscan, "heartbleed", "true");
+            return;
+		} else if (EQUALS("ticketbleed", value)) {
+            masscan_set_parameter(masscan, "ticketbleed", "true");
             return;
         } else if (EQUALS("poodle", value) || EQUALS("sslv3", value)) {
             masscan->is_poodle_sslv3 = 1;
@@ -1679,12 +1749,13 @@ is_singleton(const char *name)
         "badsum", "reason", "open", "open-only",
         "packet-trace", "release-memory",
         "log-errors", "append-output", "webxml", "no-stylesheet",
-        "no-stylesheet", "heartbleed",
+        "no-stylesheet", "heartbleed", "ticketbleed",
         "send-eth", "send-ip", "iflist", "randomize-hosts",
         "nmap", "trace-packet", "pfring", "sendq",
         "banners", "banner", "nobanners", "nobanner",
         "offline", "ping", "ping-sweep", "nobacktrace", "backtrace",
         "arp",  "infinite", "nointeractive", "interactive", "status", "nostatus",
+        "arpscan", "noreset", 
         "read-range", "read-ranges", "readrange", "read-ranges",
         0};
     size_t i;
@@ -1945,9 +2016,11 @@ masscan_command_line(struct Masscan *masscan, int argc, char *argv[])
                 if (argv[i][2])
                     arg = argv[i]+2;
                 else
-                   arg = argv[++i]; // Passes a NULL value that breaks rangelist_parse_ports in ranges.c
-		//			fprintf(stderr, "%.*s: empty parameter\n", argv[0], argv[1]);
-                masscan_set_parameter(masscan, "ports", arg);
+                    arg = argv[++i];
+                if (i >= argc || arg[0] == 0) { // if string is empty
+                    fprintf(stderr, "%s: empty parameter\n", argv[i]);
+                } else
+                    masscan_set_parameter(masscan, "ports", arg);
                 break;
             case 'P':
                 switch (argv[i][2]) {
