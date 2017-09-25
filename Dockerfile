@@ -1,9 +1,9 @@
 FROM alpine
 RUN \
 	apk add --no-cache libpcap-dev && \
-	apk add --no-cache --virtual .build-dependencies git build-base linux-headers && \
+	apk add --no-cache --virtual .build-dependencies clang git build-base linux-headers && \
 	cd /tmp && \
-	git clone https://github.com/robertdavidgraham/masscan && \
+	git clone https://github.com/r0p0s3c/masscan && \
 	cd masscan && \
 	make -j && \
 	mv bin/masscan /bin && \
