@@ -21,6 +21,7 @@ static void
 json_out_close(struct Output *out, FILE *fp)
 {
     UNUSEDPARM(out);
+    fseek(fp, -2, SEEK_CUR);
     fprintf(fp, "]\n"); // enclose the atomic {}'s into an []
 }
 
