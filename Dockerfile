@@ -9,7 +9,7 @@ RUN \
 	make -j && \
 	mv bin/masscan /bin && \
 	rm -rf /tmp/masscan && \
-	apt --purge -yy remove git clang make libc6-dev linux-kernel-headers gcc && \
+	apt --purge -yy remove git clang make linux-kernel-headers gcc && \
 	apt --purge -yy autoremove && \
 	rm -rf /var/lib/apt/lists/*
 ENTRYPOINT ["/bin/masscan"]
