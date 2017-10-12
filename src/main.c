@@ -1384,7 +1384,11 @@ main_scan(struct Masscan *masscan)
 
 
         if (time(0) - now >= masscan->wait)
+	{
             is_rx_done = 1;
+	    LOG(2,"done waiting, is_rx_done=%d\n",is_rx_done);
+	}
+
 
         if (masscan->output.is_status_updates) {
             status_print(&status, min_index, range, rate,
